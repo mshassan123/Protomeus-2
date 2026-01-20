@@ -1,0 +1,293 @@
+
+
+!pip -q install biopython py3Dmol pandas numpy matplotlib
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from Bio.PDB import PDBParser, PPBuilder
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
+from Bio import pairwise2
+from google.colab import files
+from IPython.display import display, Markdown, HTML
+import py3Dmol
+
+display(Markdown("""
+# Protomeus
+
+### Deep Structural & Mutational Comparison Tool
+
+✔ Correct mutation detection  
+✔ Insertions, deletions & substitutions  
+✔ Frameshift-safe sequence alignment  
+✔ Functional impact (SIFT-like & PolyPhen-like)  
+✔ Ramachandran analysis  
+✔ Side-by-side 3D visualization  
+
+**Created by Muhammad Sohaib Hassan**
+"""))
+
+def safe_upload(label):
+    print(label)
+    uploaded = files.upload()
+    if not uploaded:
+        raise SystemExit("❌ No PDB uploaded")
+    return list(uploaded.keys())[0]
+
+wt_file = safe_upload("Upload Wild-Type PDB")
+mt_file = safe_upload("Upload Mutant PDB")
+
+parser = PDBParser(QUIET=True)
+
+def extract_seq_phi_psi(pdb):
+    structure = parser.get_structure("X", pdb)
+    ppb = PPBuilder()
+    seqs, angles = {}, {}
+
+    for pp in ppb.build_peptides(structure):
+        chain = pp.get_ca_list()[0].get_parent().id
+        seqs[chain] = str(pp.get_sequence())
+        angles[chain] = pp.get_phi_psi_list()
+
+    return seqs, angles
+
+wt_seq, wt_angles = extract_seq_phi_psi(wt_file)
+mt_seq, mt_angles = extract_seq_phi_psi(mt_file)
+
+display(Markdown("## 🧬 Sequence Comparison"))
+
+for c in wt_seq:
+    display(Markdown(f"### Chain {c}"))
+    display(Markdown("**Wild-Type**"))
+    display(Markdown(f"`{wt_seq[c]}`"))
+    display(Markdown("**Mutant**"))
+    display(Markdown(f"`{mt_seq.get(c,'❌ Chain Missing')}`"))
+
+hydro = {
+    'A':1.8,'C':2.5,'D':-3.5,'E':-3.5,'F':2.8,'G':-0.4,'H':-3.2,
+    'I':4.5,'K':-3.9,'L':3.8,'M':1.9,'N':-3.5,'P':-1.6,
+    'Q':-3.5,'R':-4.5,'S':-0.8,'T':-0.7,'V':4.2,'W':-0.9,'Y':-1.3
+}
+
+def sift_like(wt, mt):
+    diff = abs(hydro.get(wt,0) - hydro.get(mt,0))
+    return round(max(0, 1 - diff/5), 3)
+
+def polyphen_like(wt, mt):
+    aromatic = "FWY"
+    charged = "KRHDE"
+    if wt in aromatic and mt not in aromatic:
+        return "Probably Damaging"
+    if wt in charged and mt not in charged:
+        return "Possibly Damaging"
+    return "Benign"
+
+def detect_mutations(wt, mt):
+    aln = pairwise2.align.globalms(wt, mt, 2, -1, -5, -0.5)[0]
+    wt_aln, mt_aln = aln.seqA, aln.seqB
+
+    wt_pos = 0
+    mutations = []
+
+    for w, m in zip(wt_aln, mt_aln):
+        if w != "-": wt_pos += 1
+
+        if w == m:
+            continue
+
+        if w == "-":
+            mutations.append({
+                "Type": "Insertion",
+                "WT Position": wt_pos,
+                "Inserted": m
+            })
+
+        elif m == "-":
+            mutations.append({
+                "Type": "Deletion",
+                "WT Position": wt_pos,
+                "Deleted": w
+            })
+
+        else:
+            mutations.append({
+                "Type": "Substitution",
+                "WT Position": wt_pos,
+                "WT": w,
+                "Mutant": m,
+                "ΔHydrophobicity": hydro.get(m,0) - hydro.get(w,0),
+                "SIFT-like": sift_like(w,m),
+                "PolyPhen-like": polyphen_like(w,m)
+            })
+
+    return pd.DataFrame(mutations)
+
+display(Markdown("## 🔬 Mutation Detection & Functional Annotation"))
+
+for c in wt_seq:
+    display(Markdown(f"### Chain {c}"))
+
+    if c not in mt_seq:
+        display(Markdown("❌ **Entire chain missing in mutant structure**"))
+        continue
+
+    df = detect_mutations(wt_seq[c], mt_seq[c])
+
+    if df.empty:
+        display(Markdown("✅ **No mutations detected**"))
+    else:
+        display(df)
+
+display(Markdown("## 🧬 Mutation-Mapped Sequence View"))
+
+def colored_sequence_view(wt, mt, line_width=80):
+    aln = pairwise2.align.globalms(wt, mt, 2, -1, -5, -0.5)[0]
+    wt_aln, mt_aln = aln.seqA, aln.seqB
+
+    html_seq = []
+    wt_pos = 0
+
+    for w, m in zip(wt_aln, mt_aln):
+
+        # Insertion (extra in mutant)
+        if w == "-" and m != "-":
+            html_seq.append(f'<span style="color:green;">{m}</span>')
+
+        # Deletion (missing in mutant)
+        elif w != "-" and m == "-":
+            wt_pos += 1
+            html_seq.append(f'<span style="color:red;">{w}</span>')
+
+        # Substitution
+        elif w != m:
+            wt_pos += 1
+            html_seq.append(f'<span style="color:red;">{w}</span>')
+            html_seq.append(f'<span style="color:purple;">{m}</span>')
+
+        # Identical
+        else:
+            wt_pos += 1
+            html_seq.append(f'<span style="color:black;">{w}</span>')
+
+    # Line wrapping for visualization
+    wrapped = [
+        "".join(html_seq[i:i+line_width])
+        for i in range(0, len(html_seq), line_width)
+    ]
+
+    return "<br>".join(wrapped)
+
+for c in wt_seq:
+    if c not in mt_seq:
+        continue
+
+    display(Markdown(f"### Chain {c}"))
+    display(HTML(f"""
+    <div style="
+        font-family: monospace;
+        font-size: 14px;
+        line-height: 1.6;
+        padding: 12px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background-color: #fafafa;
+        max-height: 260px;
+        overflow-y: auto;
+        white-space: normal;
+    ">
+        {colored_sequence_view(wt_seq[c], mt_seq[c])}
+    </div>
+    """))
+
+display(HTML("""
+<div style="margin-top:15px; padding:10px; border:1px solid #ddd; border-radius:8px;">
+  <b>🔗 External Functional Impact Analysis Tools</b><br><br>
+
+  <a href="http://genetics.bwh.harvard.edu/pph2/" target="_blank">
+    <button style="
+      padding:10px 16px;
+      margin-right:10px;
+      font-size:14px;
+      border-radius:6px;
+      border:none;
+      background-color:#4CAF50;
+      color:white;
+      cursor:pointer;">
+      🧬 Analyze with PolyPhen-2
+    </button>
+  </a>
+
+  <a href="https://sift.bii.a-star.edu.sg/" target="_blank">
+    <button style="
+      padding:10px 16px;
+      font-size:14px;
+      border-radius:6px;
+      border:none;
+      background-color:#2196F3;
+      color:white;
+      cursor:pointer;">
+      🧬 Analyze with SIFT
+    </button>
+  </a>
+
+  <p style="margin-top:10px; font-size:13px; color:#555;">
+    Use these tools to further evaluate the functional impact of detected amino-acid substitutions.
+  </p>
+</div>
+"""))
+
+display(Markdown("## 📊 Physicochemical Profile"))
+
+def analyze(seq):
+    p = ProteinAnalysis(seq)
+    return {
+        "Length": len(seq),
+        "MW (Da)": p.molecular_weight(),
+        "pI": p.isoelectric_point(),
+        "GRAVY": p.gravy(),
+        "Instability Index": p.instability_index(),
+        "Aromaticity": p.aromaticity(),
+        "Stability": "Stable" if p.instability_index() < 40 else "Unstable"
+    }
+
+for c in wt_seq:
+    df = pd.DataFrame(
+        [analyze(wt_seq[c]), analyze(mt_seq[c])],
+        index=["Wild-Type","Mutant"]
+    )
+    display(df.round(3))
+
+display(Markdown("## 📐 Ramachandran Plots"))
+
+def rama_plot(angles, title):
+    phi = [a[0] for a in angles if a[0] and a[1]]
+    psi = [a[1] for a in angles if a[0] and a[1]]
+    plt.figure(figsize=(4,4))
+    plt.scatter(phi, psi, s=10)
+    plt.xlabel("Phi")
+    plt.ylabel("Psi")
+    plt.title(title)
+    plt.show()
+
+for c in wt_angles:
+    rama_plot(wt_angles[c], f"WT Chain {c}")
+    rama_plot(mt_angles[c], f"Mutant Chain {c}")
+
+display(Markdown("## 🧬 3D Structural Comparison"))
+
+def render(pdb):
+    v = py3Dmol.view(width=420, height=420)
+    v.addModel(open(pdb).read(), "pdb")
+    v.setStyle({"cartoon": {"color": "spectrum"}})
+    v.zoomTo()
+    return v._make_html()
+
+display(HTML(f"""
+<div style="display:flex;gap:20px">
+  <div><h4>Wild-Type</h4>{render(wt_file)}</div>
+  <div><h4>Mutant</h4>{render(mt_file)}</div>
+</div>
+"""))
+
+display(Markdown("✅ **Analysis complete — mutation engine fully functional.**"))
