@@ -1,155 +1,213 @@
-🧬 Protomeus 2
-Responsible Protein Variant & Structural Analysis Platform
-<p align="center"> <img src="assets/protomeus_logo.png" width="300"/> </p>
-🚀 Overview
+# 🧬 Protomeus 2
+## Responsible Protein Variant & Structural Analysis Platform
 
-Protomeus 2 is a next-generation protein analysis framework developed to ensure biological correctness, computational rigor, and ethical responsibility in protein variant studies.
+---
 
-Unlike traditional tools, Protomeus 2 actively prevents misuse by validating homology, alignment quality, and comparability assumptions before performing downstream analyses.
+## 🚀 Overview
 
-🧠 Why Protomeus 2?
+**Protomeus 2** is a publication-grade computational framework for **sequence-, mutation-, and structure-aware comparison of protein variants**.  
+It is designed with **biological responsibility**, **alignment validation**, and **misuse prevention** as core principles.
 
-Many tools allow:
+This tool is **not a toy**. It is built for researchers, students, and laboratories working with real protein data.
 
-Structural comparison of unrelated proteins
+---
 
-RMSD calculations without alignment validation
+## 🧠 Why Protomeus 2 Exists
 
-Overinterpretation of point mutations
+Many protein analysis tools allow users to:
+- Compare non-homologous proteins
+- Perform RMSD calculations without validating alignment
+- Interpret structural differences that arise from poor comparability
 
-Protomeus 2 refuses to do that.
+**Protomeus 2 actively prevents this.**
 
-It is designed for real science, not pretty pictures.
+If two proteins are not comparable, the tool will:
+- Clearly report this
+- Disable misleading analyses
+- Warn the user explicitly
 
-🔧 Core Modules
-1️⃣ Sequence Extraction & Validation
+---
 
-Extracts sequences directly from PDB structures
+## 🧩 Core Capabilities
 
-Validates chain integrity
+Protomeus 2 integrates **three validated modules** into a single pipeline:
 
-Handles missing residues and gaps
+1. Sequence & mutation analysis  
+2. Structure superimposition (only when justified)  
+3. External interpretation tools panel  
 
-2️⃣ Global Alignment Engine
+Each module runs independently but communicates biologically consistent results.
 
-Uses BLOSUM62-based global alignment
+---
 
-Computes:
+## 1️⃣ Sequence Extraction
 
-Sequence identity
+- Extracts amino acid sequences directly from uploaded PDB files
+- Handles missing residues and discontinuous chains
+- Avoids FASTA assumptions
+- Structure-aware sequence reconstruction
 
-Alignment coverage
+---
 
-Explicitly detects:
+## 2️⃣ Global Sequence Alignment
 
-Substitutions
+- Global alignment using **BLOSUM62**
+- Implemented via Biopython PairwiseAligner
+- Explicit gap penalties
+- Supports large insertions and deletions
 
-Insertions
+### Calculated Metrics
+- Sequence identity (%)
+- Alignment coverage (%)
+- Total aligned length
 
-Deletions
+---
 
-3️⃣ Mutation Mapping & Visualization
+## 3️⃣ Mutation Detection & Classification
 
-Mutation-aware alignment traversal
+Detected differences are classified as:
 
-Color-coded mutation summary:
+- **Substitution** → amino acid replacement
+- **Insertion** → residue present only in mutant
+- **Deletion** → residue present only in wild-type
 
-🟩 Substitution
+Each mutation records:
+- Wild-type position
+- Mutation type
+- Exact amino acid change
 
-🟦 Insertion
+---
 
-🟥 Deletion
+## 4️⃣ Mutation Summary Visualization
 
-Positionally accurate highlighting
+Protomeus 2 generates a **mutation summary box** with:
 
-4️⃣ Physicochemical Profiling
+- Fixed white background
+- Black base text
+- Color-coded changes:
+  - **Green** → substitutions
+  - **Blue** → insertions
+  - **Red** → deletions
 
-Molecular weight
+The visualization:
+- Is alignment-aware
+- Preserves positional accuracy
+- Prevents overflow or misalignment
 
-Isoelectric point (pI)
+---
 
-GRAVY score
+## 5️⃣ Physicochemical Property Analysis
 
-Instability index
+Calculated using **BioPython ProtParam**:
 
-5️⃣ Structural Safeguards
+- Protein length
+- Molecular weight (Da)
+- Isoelectric point (pI)
+- GRAVY score
+- Instability index
+- Stability classification
 
-Before any superimposition:
+Differences between wild-type and mutant are reported explicitly.
 
-✔ Identity ≥ 30%
+---
 
-✔ Coverage ≥ 60%
+## 6️⃣ Structural Validation Gate (Critical)
 
-✔ Same fold assumption validated
+Before performing **any structural superimposition**, Protomeus 2 validates:
 
-If criteria fail:
+- Sequence identity ≥ 30%
+- Alignment coverage ≥ 60%
+- Comparable protein length
 
-⚠️ Structural comparison is disabled
+### If validation fails:
+- Structural analysis is disabled
+- Clear warning is shown
+- No RMSD or folding claims are made
 
-6️⃣ Structure Superimposition (When Allowed)
+---
 
-Cα-based alignment
+## 7️⃣ Structural Superimposition
 
-Kabsch algorithm
+When validation passes:
 
-RMSD computed only on aligned regions
+- Cα atoms are extracted
+- Alignment-restricted residues are used
+- Kabsch algorithm is applied
+- Mutant structure is transformed safely
 
-Visualized via NGLView
+Interactive visualization is provided using **py3Dmol**.
 
-🚨 Built-In Responsibility Checks
+---
 
-Protomeus 2 automatically detects:
+## 8️⃣ External Variant Interpretation Tools
 
-Non-homologous proteins
+Protomeus 2 provides direct access to trusted external tools:
 
-Excessive missing regions
+- iMODS – Normal Mode Analysis
+- DynaMut2 – Stability & flexibility
+- SIFT – Sequence pathogenicity
+- PolyPhen-2 – Structural damage
+- PhD-SNP – Disease association
+- I-Mutant – ΔΔG stability
+- CADD – Variant deleteriousness
+- MUpro – Protein stability
 
-Cross-species misuse (e.g., chicken vs human CFTR)
+These tools are **linked, not embedded**, preserving responsibility.
 
-And responds with:
+---
 
-Clear warnings
+## 🚫 What Protomeus 2 Does NOT Do
 
-Disabled modules
+- Does NOT predict clinical pathogenicity
+- Does NOT infer disease causation
+- Does NOT replace wet-lab experiments
+- Does NOT force comparison of unrelated proteins
+- Does NOT interpret post-translational modifications automatically
 
-Transparent explanations
+---
 
-❌ What Protomeus 2 Does NOT Do
+## ⚠️ Limitations
 
-❌ No pathogenicity claims
+- Depends on quality of PDB structures
+- Cannot model long-range allosteric effects
+- Does not simulate dynamics beyond rigid alignment
+- PTMs must be interpreted manually
+- Single-chain focused analysis
 
-❌ No clinical predictions
+---
 
-❌ No forced alignments
+## 🎯 Intended Use Cases
 
-❌ No misuse of RMSD
+- Academic research
+- Variant prioritization
+- Structural biology education
+- Thesis and dissertation projects
+- Pre-screening before wet-lab validation
 
-❌ No assumption that “mutation = effect”
+---
 
-⚠️ Limitations
+## 🧪 Scientific Responsibility Statement
 
-Dependent on PDB quality
-
-Single-chain analysis
-
-No PTM modeling (phosphorylation handled only if present in structure)
-
-No dynamic simulations (MD is external)
-
-🧪 Intended Use
-
-Variant prioritization
-
-Structural biology research
-
-Thesis & dissertation work
-
-Pre-wet-lab screening
-
-Educational demonstrations
-
-🧭 Ethical Statement
-
-Protomeus 2 is designed to prevent misleading interpretations.
+Protomeus 2 is designed to **prevent overinterpretation**.  
 All results must be validated experimentally.
-The authors are not responsible for misuse or overinterpretation.
+
+The authors assume no responsibility for misuse or unsupported conclusions.
+
+---
+
+## 📦 Requirements
+
+- Python ≥ 3.9
+- Biopython
+- NumPy
+- Pandas
+- py3Dmol
+- ipywidgets
+- Google Colab (recommended)
+
+---
+
+## 🧬 Version
+
+**Protomeus 2**  
+A complete redesign focused on correctness, responsibility, and publication-grade output.
