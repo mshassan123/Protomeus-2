@@ -1,0 +1,258 @@
+
+!pip -q install biopython py3Dmol pandas numpy ipywidgets
+
+import numpy as np
+import pandas as pd
+from Bio.Align import PairwiseAligner
+from Bio.Align import substitution_matrices
+from Bio.PDB import PDBParser, PPBuilder, PDBIO
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
+from IPython.display import display, HTML, Markdown, clear_output
+import py3Dmol
+import ipywidgets as widgets
+from google.colab import files
+
+display(Markdown("# 🧬 **PROTOMEUS 2**"))
+
+print("⬆ Upload WILD-TYPE PDB")
+wt_file = list(files.upload().keys())[0]
+
+print("⬆ Upload MUTANT PDB")
+mt_file = list(files.upload().keys())[0]
+
+parser = PDBParser(QUIET=True)
+
+display(Markdown("## 🔬 Structural Mutation Analyzer"))
+
+def extract_sequence(pdb_file):
+    structure = parser.get_structure("X", pdb_file)
+    ppb = PPBuilder()
+    seq = ""
+    for pp in ppb.build_peptides(structure):
+        seq += str(pp.get_sequence())
+    return seq
+
+wt_seq = extract_sequence(wt_file)
+mt_seq = extract_sequence(mt_file)
+
+aligner = PairwiseAligner()
+aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+aligner.open_gap_score = -10
+aligner.extend_gap_score = -0.5
+aligner.mode = "global"
+
+alignment = aligner.align(wt_seq, mt_seq)[0]
+wt_aln, mt_aln = alignment.aligned
+
+def build_alignment(seq, blocks):
+    out, last = "", 0
+    for s, e in blocks:
+        out += "-" * (s - last)
+        out += seq[s:e]
+        last = e
+    return out
+
+wt_aln_str = build_alignment(wt_seq, wt_aln)
+mt_aln_str = build_alignment(mt_seq, mt_aln)
+
+# Pad sequences to same length
+L = max(len(wt_aln_str), len(mt_aln_str))
+wt_aln_str = wt_aln_str.ljust(L, "-")
+mt_aln_str = mt_aln_str.ljust(L, "-")
+
+
+def analyze_and_color_seq(wt, mt):
+    wt_out, mt_out = "", ""
+    mutation_types = set()
+    max_len = max(len(wt), len(mt))
+
+    for i in range(max_len):
+        w = wt[i] if i < len(wt) else "-"
+        m = mt[i] if i < len(mt) else "-"
+
+        if w == m:
+            wt_out += w
+            mt_out += m
+        elif w == "-" and m != "-":
+            mutation_types.add("Insertion")
+            mt_out += f"<span style='color:blue;font-weight:bold'>{m}</span>"
+        elif w != "-" and m == "-":
+            mutation_types.add("Deletion")
+            wt_out += f"<span style='color:red;font-weight:bold'>{w}</span>"
+        else:
+            mutation_types.add("Substitution")
+            wt_out += w
+            mt_out += f"<span style='color:green;font-weight:bold'>{m}</span>"
+
+    mutation_label = ", ".join(sorted(mutation_types)) if mutation_types else "No mutation detected"
+    return wt_out, mt_out, mutation_label
+
+wt_col, mt_col, mutation_label = analyze_and_color_seq(wt_aln_str, mt_aln_str)
+
+display(HTML(f"""
+<div style="
+    width:800px;
+    background-color:white;
+    color:black;
+    border:2px solid black;
+    padding:20px;
+    margin-bottom:30px;
+    font-family:monospace;
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+">
+<h3 style="margin-top:0;">🧬 Mutation Summary</h3>
+<p><b>Detected Mutation Type:</b> {mutation_label}</p>
+<p><b>Wild-Type:</b><br>{wt_col}</p>
+<p><b>Mutant:</b><br>{mt_col}</p>
+</div>
+"""))
+
+
+mutations = []
+wt_pos = 0
+for w, m in zip(wt_aln_str, mt_aln_str):
+    if w != "-":
+        wt_pos += 1
+    if w != m:
+        if w == "-":
+            mutations.append((wt_pos, "Insertion", m))
+        elif m == "-":
+            mutations.append((wt_pos, "Deletion", w))
+        else:
+            mutations.append((wt_pos, "Substitution", f"{w} → {m}"))
+
+display(pd.DataFrame(mutations, columns=["WT Position", "Type", "Change"]))
+
+def protparam(seq):
+    p = ProteinAnalysis(seq)
+    return {
+        "Length": len(seq),
+        "MW (Da)": round(p.molecular_weight(),2),
+        "pI": round(p.isoelectric_point(),2),
+        "GRAVY": round(p.gravy(),3),
+        "Instability Index": round(p.instability_index(),2),
+        "Stability": "Stable" if p.instability_index() < 40 else "Unstable"
+    }
+
+df = pd.DataFrame([protparam(wt_seq), protparam(mt_seq)], index=["Wild-Type", "Mutant"])
+display(df)
+display(df.select_dtypes(float).diff())
+
+display(Markdown("### 3D Structural Comparison"))
+
+def render(pdb):
+    v = py3Dmol.view(width=420, height=420)
+    v.addModel(open(pdb).read(), "pdb")
+    v.setStyle({"cartoon": {"color": "spectrum"}})
+    v.zoomTo()
+    return v._make_html()
+
+display(HTML(f"""
+<div style="display:flex;gap:20px">
+  <div><h4>Wild-Type</h4>{render(wt_file)}</div>
+  <div><h4>Mutant</h4>{render(mt_file)}</div>
+</div>
+"""))
+
+display(Markdown("## 🧬 Structural Superimposition & Interactive Viewer"))
+module2_out = widgets.Output()
+display(module2_out)
+
+with module2_out:
+    wt_structure = parser.get_structure("WT", wt_file)
+    mut_structure = parser.get_structure("Mutant", mt_file)
+
+    def get_ca_coords(structure):
+        coords, residues = [], []
+        for model in structure:
+            for chain in model:
+                for res in chain:
+                    if "CA" in res:
+                        coords.append(res["CA"].get_coord())
+                        residues.append(res)
+        return np.array(coords), residues
+
+    wt_coords, _ = get_ca_coords(wt_structure)
+    mut_coords, mut_residues = get_ca_coords(mut_structure)
+
+    def kabsch(P, Q):
+        Pc, Qc = P-P.mean(0), Q-Q.mean(0)
+        H = Qc.T @ Pc
+        U, S, Vt = np.linalg.svd(H)
+        R = Vt.T @ U.T
+        if np.linalg.det(R) < 0:
+            Vt[2] *= -1
+            R = Vt.T @ U.T
+        t = P.mean(0) - R @ Q.mean(0)
+        return R, t
+
+    R, t = kabsch(wt_coords, mut_coords)
+    aligned = (R @ mut_coords.T).T + t
+    for i, res in enumerate(mut_residues):
+        res["CA"].set_coord(aligned[i])
+
+    io = PDBIO()
+    io.set_structure(mut_structure)
+    io.save("Mutant_superimposed.pdb")
+
+    def render_view(wt_color="red", mut_color="blue", res_range=""):
+        clear_output(wait=True)
+        v = py3Dmol.view(width=900, height=500)
+        v.addModel(open(wt_file).read(), "pdb")
+        v.addModel(open("Mutant_superimposed.pdb").read(), "pdb")
+
+        v.setStyle({"model":0},{"cartoon":{"color":wt_color}})
+        v.setStyle({"model":1},{"cartoon":{"color":mut_color}})
+
+        if res_range:
+            try:
+                s,e = map(int,res_range.split("-"))
+                v.setStyle({},{"cartoon":{"opacity":0.05}})
+                v.setStyle({"resi":list(range(s,e+1)),"model":0},{"cartoon":{"color":wt_color}})
+                v.setStyle({"resi":list(range(s,e+1)),"model":1},{"cartoon":{"color":mut_color}})
+            except:
+                pass
+
+        display(widgets.VBox([wt_color_widget, mut_color_widget, res_widget, apply_btn]))
+        v.zoomTo()
+        v.show()
+
+    wt_color_widget = widgets.Dropdown(
+        options=["red","green","blue","yellow","purple","orange","cyan","magenta","gray","white","transparent"],
+        value="red", description="WT Color:"
+    )
+    mut_color_widget = widgets.Dropdown(
+        options=["red","green","blue","yellow","purple","orange","cyan","magenta","gray","white","transparent"],
+        value="blue", description="Mut Color:"
+    )
+    res_widget = widgets.Text(value="", placeholder="e.g. 100-150", description="Residues:")
+    apply_btn = widgets.Button(description="Apply Changes")
+    apply_btn.on_click(lambda b: render_view(
+        wt_color_widget.value,
+        mut_color_widget.value,
+        res_widget.value
+    ))
+
+    render_view()
+
+display(Markdown("## 🧠 External Variant Interpretation Tools"))
+
+tools = [
+    ("iMODS","Normal Mode Analysis","https://imods.iqf.csic.es/"),
+    ("DynaMut2","Stability & Flexibility","https://biosig.lab.uq.edu.au/dynamut2/"),
+    ("SIFT","Sequence Pathogenicity","https://sift.bii.a-star.edu.sg/"),
+    ("PolyPhen-2","Structural Damage","http://genetics.bwh.harvard.edu/pph2/"),
+    ("PhD-SNP","Disease Association","https://snps.biofold.org/phd-snp/phd-snp.html"),
+    ("I-Mutant","ΔΔG Stability","https://folding.biofold.org/i-mutant/i-mutant2.0.html"),
+    ("CADD","Variant Deleteriousness","https://cadd.gs.washington.edu/score"),
+    ("MUpro","Protein Stability","https://mupro.proteomics.ics.uci.edu/")
+]
+
+html = "<div style='display:grid;grid-template-columns:repeat(2,1fr);gap:15px'>"
+for n,d,u in tools:
+    html += f"<div style='border:2px solid black;padding:15px;text-align:center;'>"
+    html += f"<h3>{n}</h3><p>{d}</p><a href='{u}' target='_blank'>Open</a></div>"
+html += "</div>"
+display(HTML(html))
