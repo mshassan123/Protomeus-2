@@ -1,0 +1,120 @@
+
+!pip -q install biopython numpy pandas
+
+
+import numpy as np
+import pandas as pd
+from Bio.Align import PairwiseAligner, substitution_matrices
+from Bio.PDB import PDBParser, PPBuilder
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
+from google.colab import files
+
+print("⬆ Upload WILD-TYPE protein (reference)")
+wt_file = list(files.upload().keys())[0]
+
+print("⬆ Upload MUTANT protein (comparison)")
+mt_file = list(files.upload().keys())[0]
+
+parser = PDBParser(QUIET=True)
+
+def extract_sequence(pdb_file):
+    structure = parser.get_structure("X", pdb_file)
+    ppb = PPBuilder()
+    peptides = ppb.build_peptides(structure)
+    if not peptides:
+        raise ValueError("❌ No protein sequence found in PDB.")
+    return "".join(str(p.get_sequence()) for p in peptides)
+
+wt_seq = extract_sequence(wt_file)
+mt_seq = extract_sequence(mt_file)
+
+aligner = PairwiseAligner()
+aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+aligner.open_gap_score = -10
+aligner.extend_gap_score = -0.5
+aligner.mode = "global"
+
+alignment = aligner.align(wt_seq, mt_seq)[0]
+
+def build_alignment(seq, blocks):
+    out, last = "", 0
+    for s, e in blocks:
+        out += "-" * (s - last)
+        out += seq[s:e]
+        last = e
+    return out
+
+wt_aln = build_alignment(wt_seq, alignment.aligned[0])
+mt_aln = build_alignment(mt_seq, alignment.aligned[1])
+
+L = max(len(wt_aln), len(mt_aln))
+wt_aln = wt_aln.ljust(L, "-")
+mt_aln = mt_aln.ljust(L, "-")
+
+subs = ins = dels = 0
+for w, m in zip(wt_aln, mt_aln):
+    if w != m:
+        if w == "-":
+            ins += 1
+        elif m == "-":
+            dels += 1
+        else:
+            subs += 1
+
+aligned_positions = sum(w != "-" and m != "-" for w, m in zip(wt_aln, mt_aln))
+matches = sum(w == m and w != "-" for w, m in zip(wt_aln, mt_aln))
+identity = matches / aligned_positions if aligned_positions else 0
+coverage_wt = aligned_positions / len(wt_seq)
+coverage_mt = aligned_positions / len(mt_seq)
+
+def protparam(seq):
+    p = ProteinAnalysis(seq)
+    return {
+        "Length": len(seq),
+        "Molecular_Weight_Da": round(p.molecular_weight(), 2),
+        "Isoelectric_Point": round(p.isoelectric_point(), 2),
+        "GRAVY": round(p.gravy(), 3),
+        "Instability_Index": round(p.instability_index(), 2),
+        "Stability": "Stable" if p.instability_index() < 40 else "Unstable"
+    }
+
+wt_props = protparam(wt_seq)
+mt_props = protparam(mt_seq)
+
+def get_ca_coords(structure, aln):
+    coords = []
+    pos = 0
+    for model in structure:
+        for chain in model:
+            for res in chain:
+                if "CA" in res:
+                    if aln[pos] != "-":
+                        coords.append(res["CA"].get_coord())
+                    pos += 1
+    return np.array(coords)
+
+wt_struct = parser.get_structure("WT", wt_file)
+mt_struct = parser.get_structure("MT", mt_file)
+
+wt_coords = get_ca_coords(wt_struct, wt_aln)
+mt_coords = get_ca_coords(mt_struct, mt_aln)
+
+if len(wt_coords) != len(mt_coords):
+    rmsd = None
+else:
+    diff = wt_coords - mt_coords
+    rmsd = np.sqrt(np.mean(np.sum(diff**2, axis=1)))
+
+summary = {
+    "Metric": ["Sequence Identity", "Reference Coverage", "Mutant Coverage", 
+               "Substitutions", "Insertions", "Deletions", "RMSD"],
+    "Value": [round(identity,3), round(coverage_wt,3), round(coverage_mt,3), subs, ins, dels, round(rmsd,3) if rmsd else "NA"]
+}
+
+summary_df = pd.DataFrame(summary)
+
+wt_props_df = pd.DataFrame(wt_props, index=["Reference"])
+mt_props_df = pd.DataFrame(mt_props, index=["Mutant"])
+
+display(summary_df)
+display(pd.concat([wt_props_df, mt_props_df]))
